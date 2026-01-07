@@ -1,0 +1,91 @@
+==============================================================================
+GUIA DE AGENDAMENTO AUTOMÁTICO - OFICINA SAAS
+Desenvolvido por: Fábio Rosestolato
+==============================================================================
+
+Este documento explica tecnicamente como funciona o sistema de agendamento de
+mensagens automáticas da Oficina do Dival e como garantir que ele continue
+operando corretamente.
+
+------------------------------------------------------------------------------
+1. COMO FUNCIONA O AGENDAMENTO (LÓGICA TÉCNICA)
+------------------------------------------------------------------------------
+
+O sistema utiliza um script inteligente (`scripts/schedule_today.js`) que atua
+como um "vigilante". Ele roda em segundo plano no servidor e monitora o relógio
+do sistema.
+
+O fluxo de execução é:
+
+1.  **Verificação Inicial:** Ao ser iniciado, o script verifica a hora atual.
+2.  **Cálculo de Delay:** Ele calcula exatamente quantos milissegundos faltam
+    para os próximos horários-alvo (Ex: 13:00 e 17:00).
+3.  **Estado de Espera:** O script entra em modo de suspensão (sleep) até o
+    momento exato. Isso economiza processamento, pois não fica verificando
+    a cada segundo.
+4.  **Disparo (Trigger):** Quando o horário chega, ele "acorda" e envia uma
+    requisição interna para a API do sistema (`POST /api/notificacoes/executar`).
+5.  **Execução da IA:**
+    - O sistema verifica no banco de dados quais clientes precisam de manutenção.
+    - A IA (Virginia Fonseca) gera a mensagem personalizada.
+    - O WhatsApp (WPPConnect) envia a mensagem.
+
+------------------------------------------------------------------------------
+2. HORÁRIOS CONFIGURADOS
+------------------------------------------------------------------------------
+
+Para o teste de hoje, os horários definidos foram:
+1.  **Imediato:** Assim que o script rodou (aprox. 11h).
+2.  **13:00:** Segundo lote de envios.
+3.  **17:00:** Terceiro e último lote do dia.
+
+*Nota:* O sistema é inteligente o suficiente para não enviar mensagens duplicadas
+se nada mudou, mas para fins de teste, configuramos para ele revalidar sempre.
+
+------------------------------------------------------------------------------
+3. COMO MANTER O AGENDAMENTO RODANDO
+------------------------------------------------------------------------------
+
+Para que o agendamento funcione, TRÊS coisas precisam estar acontecendo no seu
+computador:
+
+A.  **O Servidor deve estar ligado:**
+    Terminal rodando: `npm run dev`
+    (É ele que processa as mensagens e conecta no WhatsApp)
+
+B.  **O WhatsApp deve estar conectado:**
+    Você deve ver "WhatsApp Conectado" no Dashboard ou no terminal.
+
+C.  **O Script de Agendamento deve estar rodando:**
+    Terminal rodando: `node scripts/schedule_today.js`
+
+⚠️ IMPORTANTE:
+Se você fechar o terminal onde o comando `node scripts/schedule_today.js` está
+rodando, o agendamento para 17:00 será cancelado! Mantenha a janela aberta.
+
+------------------------------------------------------------------------------
+4. AUTOMATIZAÇÃO DEFINITIVA (PARA O FUTURO)
+------------------------------------------------------------------------------
+
+Para não precisar deixar janelas abertas manualmente todos os dias, a solução
+profissional definitiva é usar o "GitHub Actions" ou o "Agendador de Tarefas do Windows".
+
+No arquivo `README.md` e `EXECUCAO_COMPLETA.md` eu deixei os passos para
+configurar isso no GitHub, que é a forma mais profissional (nuvem), pois não
+depende do seu computador estar ligado.
+
+------------------------------------------------------------------------------
+5. COMANDOS RÁPIDOS
+------------------------------------------------------------------------------
+
+Se precisar reiniciar o agendamento manualmente:
+
+1. Abra um terminal na pasta do projeto.
+2. Execute:
+   node scripts/schedule_today.js
+
+O sistema irá recalcular os horários restantes e agendar os próximos envios.
+
+==============================================================================
+Fim do Guia
+==============================================================================
