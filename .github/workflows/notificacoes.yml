@@ -1,0 +1,107 @@
+name: 🔔 Enviar Notificações Automáticas
+
+on:
+  schedule:
+    # Executar 3 vezes ao dia (horário UTC, -3h para Brasília)
+    - cron: '0 12 * * *'  # 09:00 BRT
+    - cron: '0 17 * * *'  # 14:00 BRT
+    - cron: '0 23 * * *'  # 20:00 BRT
+  
+  # Permite execução manual via GitHub Actions UI
+  workflow_dispatch:
+
+jobs:
+  send-notifications:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout código
+        uses: actions/checkout@v4
+
+      - name: 🟢 Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: 📦 Instalar dependências
+        run: |
+          npm ci
+          # Instalar dependências necessárias para WPPConnect (Puppeteer)
+          sudo apt-get update
+          sudo apt-get install -y \
+            gconf-service libasound2 libatk1.0-0 libc6 libcairo2 \
+            libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgcc1 \
+            libgconf-2-4 libgdk-pixbuf2.0-0 libglib2.0-0 libgtk-3-0 \
+            libnspr4 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 \
+            libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 \
+            libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 \
+            libxrender1 libxss1 libxtst6 ca-certificates \
+            fonts-liberation libappindicator1 libnss3 lsb-release \
+            xdg-utils wget
+
+      - name: 🗄️ Configurar banco de dados
+        run: |
+          # Verificar se banco existe, se não, inicializar
+          if [ ! -f "./database/oficina.db" ]; then
+            echo "Inicializando banco de dados..."
+            npm run db:init
+          fi
+
+      - name: 📱 Restaurar sessão WhatsApp
+        uses: actions/cache@v3
+        with:
+          path: |
+            ./tokens
+            ./tokens/**/*
+          key: ${{ runner.os }}-whatsapp-session-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-whatsapp-session-
+
+      - name: 🔧 Configurar variáveis de ambiente
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        run: |
+          echo "GROQ_API_KEY=${GROQ_API_KEY}" >> .env
+          echo "MISTRAL_API_KEY=${MISTRAL_API_KEY}" >> .env
+          echo "NODE_ENV=production" >> .env
+          echo "DATABASE_PATH=./database/oficina.db" >> .env
+          echo "WPPCONNECT_SESSION=oficina-github-action" >> .env
+
+      - name: 🚀 Executar envio de notificações
+        run: |
+          echo "=== Iniciando processo de notificações ==="
+          node scripts/send-notifications.js || true
+          echo "=== Processo concluído ==="
+
+      - name: 💾 Salvar sessão WhatsApp
+        uses: actions/cache/save@v3
+        if: always()
+        with:
+          path: |
+            ./tokens
+            ./tokens/**/*
+          key: ${{ runner.os }}-whatsapp-session-${{ github.sha }}
+
+      - name: 📊 Gerar relatório
+        if: always()
+        run: |
+          echo "=== RELATÓRIO DE EXECUÇÃO ==="
+          echo "Data/Hora: $(date)"
+          echo "Workflow: ${{ github.workflow }}"
+          echo "Run ID: ${{ github.run_id }}"
+          
+          # Se o banco existir, mostrar estatísticas
+          if [ -f "./database/oficina.db" ]; then
+            echo "=== Estatísticas do Banco ==="
+            sqlite3 ./database/oficina.db "SELECT 'Clientes ativos: ' || COUNT(*) FROM clientes WHERE ativo = 1;"
+            sqlite3 ./database/oficina.db "SELECT 'Notificações enviadas: ' || COUNT(*) FROM notificacoes WHERE enviada = 1;"
+            sqlite3 ./database/oficina.db "SELECT 'Notificações pendentes: ' || COUNT(*) FROM notificacoes WHERE enviada = 0;"
+          fi
+
+      - name: 📧 Notificar em caso de erro
+        if: failure()
+        run: |
+          echo "❌ Falha na execução do workflow"
+          echo "Verifique os logs em: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
