@@ -1,0 +1,11 @@
+{
+  "buildCommand": "cd carroclaude && npm install && npm run build",
+  "outputDirectory": "carroclaude/.next",
+  "framework": "nextjs",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/carroclaude/$1"
+    }
+  ]
+}
