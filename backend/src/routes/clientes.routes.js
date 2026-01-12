@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../models/database');
+const { validate, sanitizeBody } = require('../middleware/validation');
+
+// Aplicar sanitização em todas as rotas
+router.use(sanitizeBody);
 
 // Listar todos os clientes
 router.get('/', (req, res) => {
@@ -11,25 +15,26 @@ router.get('/', (req, res) => {
     };
 
     const clientes = db.listarClientes(filtros);
-    
+
     res.json({
       sucesso: true,
       total: clientes.length,
       clientes
     });
   } catch (error) {
+    console.error('Erro ao listar clientes:', error);
     res.status(500).json({
       sucesso: false,
-      erro: error.message
+      erro: 'Erro interno ao buscar clientes'
     });
   }
 });
 
 // Buscar cliente por ID
-router.get('/:id', (req, res) => {
+router.get('/:id', validate('idParam', 'params'), (req, res) => {
   try {
     const cliente = db.buscarClientePorId(req.params.id);
-    
+
     if (!cliente) {
       return res.status(404).json({
         sucesso: false,
@@ -46,25 +51,18 @@ router.get('/:id', (req, res) => {
       historico
     });
   } catch (error) {
+    console.error('Erro ao buscar cliente:', error);
     res.status(500).json({
       sucesso: false,
-      erro: error.message
+      erro: 'Erro interno ao buscar cliente'
     });
   }
 });
 
 // Criar novo cliente
-router.post('/', (req, res) => {
+router.post('/', validate('cliente'), (req, res) => {
   try {
     const { nome, telefone, carro, placa, km_media_mensal } = req.body;
-
-    // Validações
-    if (!nome || !telefone || !carro) {
-      return res.status(400).json({
-        sucesso: false,
-        erro: 'Nome, telefone e carro são obrigatórios'
-      });
-    }
 
     // Verificar se telefone já existe
     const clienteExistente = db.buscarClientePorTelefone(telefone);
@@ -91,9 +89,10 @@ router.post('/', (req, res) => {
       cliente: novoCliente
     });
   } catch (error) {
+    console.error('Erro ao criar cliente:', error);
     res.status(500).json({
       sucesso: false,
-      erro: error.message
+      erro: 'Erro interno ao cadastrar cliente'
     });
   }
 });
@@ -102,7 +101,7 @@ router.post('/', (req, res) => {
 router.put('/:id', (req, res) => {
   try {
     const cliente = db.buscarClientePorId(req.params.id);
-    
+
     if (!cliente) {
       return res.status(404).json({
         sucesso: false,
@@ -139,7 +138,7 @@ router.put('/:id', (req, res) => {
 router.delete('/:id', (req, res) => {
   try {
     const cliente = db.buscarClientePorId(req.params.id);
-    
+
     if (!cliente) {
       return res.status(404).json({
         sucesso: false,

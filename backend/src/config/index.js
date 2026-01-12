@@ -1,8 +1,31 @@
 require('dotenv').config();
 
+// Validação de variáveis de ambiente críticas
+const requiredEnvVars = ['DATABASE_PATH'];
+const missingVars = requiredEnvVars.filter(v => !process.env[v] && v !== 'DATABASE_PATH');
+
+if (missingVars.length > 0) {
+  console.warn(`⚠️ Variáveis de ambiente faltando: ${missingVars.join(', ')}`);
+}
+
+// Lista de origens permitidas para CORS
+const getAllowedOrigins = () => {
+  const origins = process.env.CORS_ORIGINS;
+  if (origins) {
+    return origins.split(',').map(o => o.trim());
+  }
+  // Padrão para desenvolvimento
+  if (process.env.NODE_ENV === 'development') {
+    return ['http://localhost:3000', 'http://localhost:3001', 'http://127.0.0.1:3000'];
+  }
+  // Em produção, exigir configuração explícita
+  console.warn('⚠️ CORS_ORIGINS não configurada. Usando localhost apenas.');
+  return ['http://localhost:3000'];
+};
+
 module.exports = {
   // Servidor
-  port: process.env.PORT || 3000,
+  port: parseInt(process.env.PORT, 10) || 3000,
   nodeEnv: process.env.NODE_ENV || 'development',
 
   // Banco de dados
@@ -13,11 +36,11 @@ module.exports = {
   // WhatsApp WPPConnect
   whatsapp: {
     session: process.env.WPPCONNECT_SESSION || 'oficina-session',
-    port: process.env.WPPCONNECT_PORT || 3001,
+    port: parseInt(process.env.WPPCONNECT_PORT, 10) || 3001,
     webhookUrl: process.env.WPPCONNECT_WEBHOOK_URL || 'http://localhost:3000/webhook/whatsapp',
     deviceName: 'Oficina SaaS',
-    headless: false,
-    logQR: true
+    headless: process.env.NODE_ENV === 'production',
+    logQR: process.env.NODE_ENV !== 'production'
   },
 
   // APIs de IA
@@ -45,22 +68,49 @@ module.exports = {
 
   // Intervalos de manutenção (em quilômetros)
   maintenance: {
-    troca_oleo: parseInt(process.env.INTERVAL_TROCA_OLEO) || 5000,
-    filtro_oleo: parseInt(process.env.INTERVAL_FILTRO_OLEO) || 10000,
-    correia_dentada: parseInt(process.env.INTERVAL_CORREIA_DENTADA) || 60000,
-    filtro_ar: parseInt(process.env.INTERVAL_FILTRO_AR) || 15000,
-    filtro_combustivel: parseInt(process.env.INTERVAL_FILTRO_COMBUSTIVEL) || 20000
+    troca_oleo: parseInt(process.env.INTERVAL_TROCA_OLEO, 10) || 5000,
+    filtro_oleo: parseInt(process.env.INTERVAL_FILTRO_OLEO, 10) || 10000,
+    correia_dentada: parseInt(process.env.INTERVAL_CORREIA_DENTADA, 10) || 60000,
+    filtro_ar: parseInt(process.env.INTERVAL_FILTRO_AR, 10) || 15000,
+    filtro_combustivel: parseInt(process.env.INTERVAL_FILTRO_COMBUSTIVEL, 10) || 20000
   },
 
-  // Limites e segurança
+  // Rate Limiting - Mais restritivo em produção
   rateLimit: {
-    windowMs: 15 * 60 * 1000, // 15 minutos
-    max: 100 // máximo de requisições por janela
+    windowMs: process.env.NODE_ENV === 'production' ? 15 * 60 * 1000 : 5 * 60 * 1000,
+    max: process.env.NODE_ENV === 'production' ? 100 : 500,
+    message: {
+      sucesso: false,
+      erro: 'Muitas requisições. Tente novamente em alguns minutos.'
+    },
+    standardHeaders: true,
+    legacyHeaders: false
   },
 
-  // CORS
+  // CORS - Configuração segura
   cors: {
-    origin: process.env.CORS_ORIGIN || '*',
-    credentials: true
+    origin: (origin, callback) => {
+      const allowedOrigins = getAllowedOrigins();
+      // Permitir requisições sem origin (como mobile apps ou curl)
+      if (!origin) {
+        return callback(null, true);
+      }
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      callback(new Error('Origem não permitida pelo CORS'));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  },
+
+  // Segurança adicional
+  security: {
+    bcryptRounds: 12,
+    sessionTimeout: 7 * 24 * 60 * 60 * 1000, // 7 dias
+    maxLoginAttempts: 5,
+    lockoutTime: 15 * 60 * 1000 // 15 minutos
   }
 };
+

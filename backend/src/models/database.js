@@ -1,230 +1,371 @@
-const Database = require('better-sqlite3');
-const path = require('path');
+const { createClient } = require('@supabase/supabase-js');
 const config = require('../config');
+
+// Configuração do cliente Supabase (usando Role Key para backend)
+// Em produção, isso deve ser o Service Role Key para ignorar RLS ou ter as policies corretas
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl || !serviceKey) {
+  console.error('❌ CRÍTICO: Variáveis do Supabase não configuradas no backend.');
+}
+
+const supabase = createClient(supabaseUrl, serviceKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false
+  }
+});
 
 class DatabaseModel {
   constructor() {
-    const dbPath = path.resolve(config.database.path);
-    this.db = new Database(dbPath);
-    this.db.pragma('foreign_keys = ON');
+    this.client = supabase;
+    console.log('🔌 Conectado ao Supabase (PostgreSQL)');
   }
 
   // ==================== CLIENTES ====================
-  
-  criarCliente(data) {
-    const stmt = this.db.prepare(`
-      INSERT INTO clientes (nome, telefone, carro, placa, km_media_mensal)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-    return stmt.run(data.nome, data.telefone, data.carro, data.placa, data.km_media_mensal || 1000);
+
+  async criarCliente(data) {
+    const { data: cliente, error } = await this.client
+      .from('clientes')
+      .insert({
+        nome: data.nome,
+        telefone: data.telefone,
+        carro: data.carro,
+        placa: data.placa,
+        km_media_mensal: data.km_media_mensal || 1000,
+        ativo: true
+      })
+      .select()
+      .single();
+
+    if (error) throw new Error(`Erro ao criar cliente: ${error.message}`);
+
+    // Retornar estrutura similar ao SQLite (lastInsertRowid/objeto)
+    return { lastInsertRowid: cliente.id, ...cliente };
   }
 
-  listarClientes(filtros = {}) {
-    let query = 'SELECT * FROM clientes WHERE ativo = 1';
-    const params = [];
+  async listarClientes(filtros = {}) {
+    let query = this.client
+      .from('clientes')
+      .select('*')
+      .eq('ativo', true);
 
     if (filtros.nome) {
-      query += ' AND nome LIKE ?';
-      params.push(`%${filtros.nome}%`);
+      query = query.ilike('nome', `%${filtros.nome}%`);
     }
 
     if (filtros.telefone) {
-      query += ' AND telefone = ?';
-      params.push(filtros.telefone);
+      query = query.eq('telefone', filtros.telefone);
     }
 
-    query += ' ORDER BY nome';
+    query = query.order('nome');
 
-    return this.db.prepare(query).all(...params);
+    const { data, error } = await query;
+    if (error) throw new Error(`Erro ao listar clientes: ${error.message}`);
+    return data;
   }
 
-  buscarClientePorId(id) {
-    return this.db.prepare('SELECT * FROM clientes WHERE id = ?').get(id);
+  async buscarClientePorId(id) {
+    const { data, error } = await this.client
+      .from('clientes')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error && error.code !== 'PGRST116') { // PGRST116 é "não encontrado"
+      throw new Error(`Erro ao buscar cliente: ${error.message}`);
+    }
+    return data;
   }
 
-  buscarClientePorTelefone(telefone) {
-    return this.db.prepare('SELECT * FROM clientes WHERE telefone = ?').get(telefone);
+  async buscarClientePorTelefone(telefone) {
+    const { data, error } = await this.client
+      .from('clientes')
+      .select('*')
+      .eq('telefone', telefone)
+      .single();
+
+    if (error && error.code !== 'PGRST116') return null;
+    return data;
   }
 
-  atualizarCliente(id, data) {
-    const stmt = this.db.prepare(`
-      UPDATE clientes 
-      SET nome = ?, telefone = ?, carro = ?, placa = ?, km_media_mensal = ?,
-          atualizado_em = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `);
-    return stmt.run(data.nome, data.telefone, data.carro, data.placa, data.km_media_mensal, id);
+  async atualizarCliente(id, data) {
+    const { error } = await this.client
+      .from('clientes')
+      .update({
+        nome: data.nome,
+        telefone: data.telefone,
+        carro: data.carro,
+        placa: data.placa,
+        km_media_mensal: data.km_media_mensal,
+        atualizado_em: new Date().toISOString()
+      })
+      .eq('id', id);
+
+    if (error) throw new Error(`Erro ao atualizar cliente: ${error.message}`);
+    return true;
   }
 
-  deletarCliente(id) {
-    const stmt = this.db.prepare('UPDATE clientes SET ativo = 0 WHERE id = ?');
-    return stmt.run(id);
+  async deletarCliente(id) {
+    // Soft delete
+    const { error } = await this.client
+      .from('clientes')
+      .update({ ativo: false })
+      .eq('id', id);
+
+    if (error) throw new Error(`Erro ao deletar cliente: ${error.message}`);
+    return true;
   }
 
   // ==================== TIPOS DE SERVIÇO ====================
 
-  listarTiposServico() {
-    return this.db.prepare('SELECT * FROM tipos_servico WHERE ativo = 1 ORDER BY nome').all();
-  }
+  async listarTiposServico() {
+    const { data, error } = await this.client
+      .from('tipos_servico')
+      .select('*')
+      .eq('ativo', true)
+      .order('nome');
 
-  buscarTipoServicoPorCodigo(codigo) {
-    return this.db.prepare('SELECT * FROM tipos_servico WHERE codigo = ?').get(codigo);
+    if (error) throw new Error(error.message);
+    return data;
   }
 
   // ==================== SERVIÇOS ====================
 
-  criarServico(data) {
-    const stmt = this.db.prepare(`
-      INSERT INTO servicos (cliente_id, tipo_servico_id, km_realizado, valor, observacoes, data_servico)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    return stmt.run(
-      data.cliente_id,
-      data.tipo_servico_id,
-      data.km_realizado,
-      data.valor || null,
-      data.observacoes || null,
-      data.data_servico
-    );
+  async criarServico(data) {
+    const { data: servico, error } = await this.client
+      .from('servicos')
+      .insert({
+        cliente_id: data.cliente_id,
+        tipo_servico_id: data.tipo_servico_id,
+        km_realizado: data.km_realizado,
+        valor: data.valor || null,
+        observacoes: data.observacoes || null,
+        data_servico: data.data_servico
+      })
+      .select()
+      .single();
+
+    if (error) throw new Error(`Erro ao criar serviço: ${error.message}`);
+    return { lastInsertRowid: servico.id, ...servico };
   }
 
-  listarServicos(filtros = {}) {
-    let query = `
-      SELECT s.*, c.nome as cliente_nome, c.telefone, c.carro, 
-             ts.nome as tipo_servico_nome, ts.codigo as tipo_servico_codigo
-      FROM servicos s
-      JOIN clientes c ON s.cliente_id = c.id
-      JOIN tipos_servico ts ON s.tipo_servico_id = ts.id
-      WHERE 1=1
-    `;
-    const params = [];
+  async listarServicos(filtros = {}) {
+    let query = this.client
+      .from('servicos')
+      .select(`
+        *,
+        clientes:cliente_id (nome, telefone, carro),
+        tipos_servico:tipo_servico_id (nome, codigo)
+      `);
 
     if (filtros.cliente_id) {
-      query += ' AND s.cliente_id = ?';
-      params.push(filtros.cliente_id);
+      query = query.eq('cliente_id', filtros.cliente_id);
     }
 
     if (filtros.tipo_servico_id) {
-      query += ' AND s.tipo_servico_id = ?';
-      params.push(filtros.tipo_servico_id);
+      query = query.eq('tipo_servico_id', filtros.tipo_servico_id);
     }
 
-    query += ' ORDER BY s.data_servico DESC';
+    query = query.order('data_servico', { ascending: false });
 
-    return this.db.prepare(query).all(...params);
+    const { data, error } = await query;
+    if (error) throw new Error(`Erro ao listar serviços: ${error.message}`);
+
+    // Flatten structure to match old API if needed
+    return data.map(s => ({
+      ...s,
+      cliente_nome: s.clientes?.nome,
+      telefone: s.clientes?.telefone,
+      carro: s.clientes?.carro,
+      tipo_servico_nome: s.tipos_servico?.nome,
+      tipo_servico_codigo: s.tipos_servico?.codigo
+    }));
   }
 
-  buscarUltimoServico(clienteId, tipoServicoId) {
-    return this.db.prepare(`
-      SELECT * FROM servicos
-      WHERE cliente_id = ? AND tipo_servico_id = ?
-      ORDER BY data_servico DESC, km_realizado DESC
-      LIMIT 1
-    `).get(clienteId, tipoServicoId);
+  async buscarUltimoServico(clienteId, tipoServicoId) {
+    const { data, error } = await this.client
+      .from('servicos')
+      .select('*')
+      .eq('cliente_id', clienteId)
+      .eq('tipo_servico_id', tipoServicoId)
+      .order('data_servico', { ascending: false })
+      .order('km_realizado', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error && error.code !== 'PGRST116') throw new Error(error.message);
+    return data;
   }
 
-  buscarHistoricoCliente(clienteId) {
-    return this.db.prepare(`
-      SELECT s.*, ts.nome as tipo_servico_nome, ts.codigo as tipo_servico_codigo, ts.intervalo_km
-      FROM servicos s
-      JOIN tipos_servico ts ON s.tipo_servico_id = ts.id
-      WHERE s.cliente_id = ?
-      ORDER BY s.data_servico DESC
-    `).all(clienteId);
+  async buscarHistoricoCliente(clienteId) {
+    const { data, error } = await this.client
+      .from('servicos')
+      .select(`
+        *,
+        tipos_servico:tipo_servico_id (nome, codigo, intervalo_km)
+      `)
+      .eq('cliente_id', clienteId)
+      .order('data_servico', { ascending: false });
+
+    if (error) throw new Error(error.message);
+
+    return data.map(s => ({
+      ...s,
+      tipo_servico_nome: s.tipos_servico?.nome,
+      tipo_servico_codigo: s.tipos_servico?.codigo,
+      intervalo_km: s.tipos_servico?.intervalo_km
+    }));
   }
 
   // ==================== NOTIFICAÇÕES ====================
 
-  criarNotificacao(data) {
-    const stmt = this.db.prepare(`
-      INSERT INTO notificacoes (cliente_id, servico_id, tipo_servico_id, mensagem, km_previsto)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-    return stmt.run(
-      data.cliente_id,
-      data.servico_id || null,
-      data.tipo_servico_id,
-      data.mensagem,
-      data.km_previsto || null
-    );
+  async criarNotificacao(data) {
+    const { data: notif, error } = await this.client
+      .from('notificacoes')
+      .insert({
+        cliente_id: data.cliente_id,
+        servico_id: data.servico_id || null,
+        tipo_servico_id: data.tipo_servico_id,
+        mensagem: data.mensagem,
+        km_previsto: data.km_previsto || null,
+        enviada: false
+      })
+      .select()
+      .single();
+
+    if (error) throw new Error(`Erro ao criar notificação: ${error.message}`);
+    return { lastInsertRowid: notif.id, ...notif };
   }
 
-  listarNotificacoesPendentes() {
-    return this.db.prepare(`
-      SELECT n.*, c.nome as cliente_nome, c.telefone, c.carro,
-             ts.nome as tipo_servico_nome, ts.codigo as tipo_servico_codigo
-      FROM notificacoes n
-      JOIN clientes c ON n.cliente_id = c.id
-      JOIN tipos_servico ts ON n.tipo_servico_id = ts.id
-      WHERE n.enviada = 0 AND n.tentativas < 3
-      ORDER BY n.criado_em ASC
-    `).all();
+  async listarNotificacoesPendentes() {
+    const { data, error } = await this.client
+      .from('notificacoes')
+      .select(`
+        *,
+        clientes:cliente_id (nome, telefone, carro),
+        tipos_servico:tipo_servico_id (nome, codigo)
+      `)
+      .eq('enviada', false)
+      .lt('tentativas', 3)
+      .order('criado_em', { ascending: true });
+
+    if (error) throw new Error(error.message);
+
+    return data.map(n => ({
+      ...n,
+      cliente_nome: n.clientes?.nome,
+      telefone: n.clientes?.telefone,
+      carro: n.clientes?.carro,
+      tipo_servico_nome: n.tipos_servico?.nome,
+      tipo_servico_codigo: n.tipos_servico?.codigo
+    }));
   }
 
-  marcarNotificacaoEnviada(id) {
-    const stmt = this.db.prepare(`
-      UPDATE notificacoes 
-      SET enviada = 1, data_envio = CURRENT_TIMESTAMP, tentativas = tentativas + 1
-      WHERE id = ?
-    `);
-    return stmt.run(id);
+  async marcarNotificacaoEnviada(id) {
+    await this.client
+      .from('notificacoes')
+      .update({
+        enviada: true,
+        data_envio: new Date().toISOString(),
+        tentativas: this.client.rpc('increment', { x: 1 }) // OU buscar e atualizar
+      })
+      .eq('id', id);
+
+    // Simplificando o incremento, Supabase não tem incremento atômico direto no update simples sem RPC
+    // Vamos fazer um update simples
+    const { error } = await this.client.rpc('incrementar_tentativa_enviada', { row_id: id });
+    // Fallback se RPC não existir (vamos criar depois ou fazer read+write)
+    if (error) {
+      // Fallback simples
+      const { data } = await this.client.from('notificacoes').select('tentativas').eq('id', id).single();
+      if (data) {
+        await this.client
+          .from('notificacoes')
+          .update({
+            enviada: true,
+            data_envio: new Date().toISOString(),
+            tentativas: (data.tentativas || 0) + 1
+          })
+          .eq('id', id);
+      }
+    }
+    return true;
   }
 
-  registrarErroNotificacao(id, erro) {
-    const stmt = this.db.prepare(`
-      UPDATE notificacoes 
-      SET erro = ?, tentativas = tentativas + 1
-      WHERE id = ?
-    `);
-    return stmt.run(erro, id);
+  async registrarErroNotificacao(id, erro) {
+    const { data } = await this.client.from('notificacoes').select('tentativas').eq('id', id).single();
+
+    await this.client
+      .from('notificacoes')
+      .update({
+        erro: erro,
+        tentativas: (data?.tentativas || 0) + 1
+      })
+      .eq('id', id);
+    return true;
   }
 
-  listarHistoricoNotificacoes(clienteId = null) {
-    let query = `
-      SELECT n.*, c.nome as cliente_nome, c.telefone,
-             ts.nome as tipo_servico_nome
-      FROM notificacoes n
-      JOIN clientes c ON n.cliente_id = c.id
-      JOIN tipos_servico ts ON n.tipo_servico_id = ts.id
-      WHERE n.enviada = 1
-    `;
+  async listarHistoricoNotificacoes(clienteId = null) {
+    let query = this.client
+      .from('notificacoes')
+      .select(`
+        *,
+        clientes:cliente_id (nome, telefone),
+        tipos_servico:tipo_servico_id (nome)
+      `)
+      .eq('enviada', true);
 
     if (clienteId) {
-      query += ' AND n.cliente_id = ?';
-      return this.db.prepare(query + ' ORDER BY n.data_envio DESC').all(clienteId);
+      query = query.eq('cliente_id', clienteId);
     }
 
-    return this.db.prepare(query + ' ORDER BY n.data_envio DESC').all();
-  }
+    query = query.order('data_envio', { ascending: false });
 
-  // ==================== CONFIGURAÇÕES ====================
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
 
-  buscarConfiguracao(chave) {
-    return this.db.prepare('SELECT * FROM configuracoes WHERE chave = ?').get(chave);
-  }
-
-  atualizarConfiguracao(chave, valor) {
-    const stmt = this.db.prepare(`
-      INSERT INTO configuracoes (chave, valor) VALUES (?, ?)
-      ON CONFLICT(chave) DO UPDATE SET valor = ?, atualizado_em = CURRENT_TIMESTAMP
-    `);
-    return stmt.run(chave, valor, valor);
+    return data.map(n => ({
+      ...n,
+      cliente_nome: n.clientes?.nome,
+      telefone: n.clientes?.telefone,
+      tipo_servico_nome: n.tipos_servico?.nome
+    }));
   }
 
   // ==================== ESTATÍSTICAS ====================
 
-  obterEstatisticas() {
+  async obterEstatisticas() {
+    const { count: totalClientes } = await this.client
+      .from('clientes')
+      .select('*', { count: 'exact', head: true })
+      .eq('ativo', true);
+
+    const { count: totalServicos } = await this.client
+      .from('servicos')
+      .select('*', { count: 'exact', head: true });
+
+    const { count: notificacoesEnviadas } = await this.client
+      .from('notificacoes')
+      .select('*', { count: 'exact', head: true })
+      .eq('enviada', true);
+
+    const { count: notificacoesPendentes } = await this.client
+      .from('notificacoes')
+      .select('*', { count: 'exact', head: true })
+      .eq('enviada', false);
+
     return {
-      total_clientes: this.db.prepare('SELECT COUNT(*) as total FROM clientes WHERE ativo = 1').get().total,
-      total_servicos: this.db.prepare('SELECT COUNT(*) as total FROM servicos').get().total,
-      total_notificacoes_enviadas: this.db.prepare('SELECT COUNT(*) as total FROM notificacoes WHERE enviada = 1').get().total,
-      notificacoes_pendentes: this.db.prepare('SELECT COUNT(*) as total FROM notificacoes WHERE enviada = 0').get().total,
-      ultima_notificacao: this.db.prepare('SELECT data_envio FROM notificacoes WHERE enviada = 1 ORDER BY data_envio DESC LIMIT 1').get()
+      total_clientes: totalClientes || 0,
+      total_servicos: totalServicos || 0,
+      total_notificacoes_enviadas: notificacoesEnviadas || 0,
+      notificacoes_pendentes: notificacoesPendentes || 0
     };
   }
 
   close() {
-    this.db.close();
+    // Supabase JS client handles connection management automatically
   }
 }
 

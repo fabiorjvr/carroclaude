@@ -27,9 +27,9 @@
   "author": "Oficina SaaS Team",
   "license": "MIT",
   "dependencies": {
+    "@supabase/supabase-js": "^2.90.0",
     "@wppconnect-team/wppconnect": "^1.30.0",
     "axios": "^1.6.5",
-    "better-sqlite3": "^12.5.0",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
     "date-fns": "^3.0.6",
@@ -37,6 +37,7 @@
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
     "helmet": "^7.1.0",
+    "joi": "^18.0.2",
     "morgan": "^1.10.0",
     "node-cron": "^3.0.3"
   },
